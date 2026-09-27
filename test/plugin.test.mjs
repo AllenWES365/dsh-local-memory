@@ -67,7 +67,7 @@ async function startMock(handler) {
 function loadTools(url, config = {}) {
   const registered = []
   const ctx = {
-    inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }),
+    inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) }, get: () => undefined }),
     get: (name) => (name === 'webServer' ? { register: () => () => {} } : undefined),
     effect: (fn) => { fn(); return () => {} },
   }
@@ -103,7 +103,7 @@ const simpleDaemon = (bankIds) => (record) => {
 test('registers exactly the two documented tools', () => {
   const registered = []
   apply(
-    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
+    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) }, get: () => undefined }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     {},
   )
   assert.deepEqual(registered.map((t) => t.name).sort(), ['memory_banks', 'memory_recall_all'])
@@ -112,7 +112,7 @@ test('registers exactly the two documented tools', () => {
 test('every tool declares a JSON-schema parameter block and a text renderer', () => {
   const registered = []
   apply(
-    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
+    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) }, get: () => undefined }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     {},
   )
   for (const def of registered) {

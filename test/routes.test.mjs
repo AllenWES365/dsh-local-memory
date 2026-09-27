@@ -115,7 +115,7 @@ test('WAITS for webServer instead of skipping when it is not mounted yet', () =>
   const bare = {
     inject: (deps, cb) => {
       requested.push(deps.join(','))
-      if (deps.includes('tools')) cb({ tools: { register: () => {} } })
+      if (deps.includes('tools')) cb({ tools: { register: () => {} }, get: () => undefined })
       // A real Cordis only calls back for `webServer` once that service exists.
       if (deps.includes('webServer')) {
         cb({
@@ -140,7 +140,7 @@ test('does NOT wait for webServer when it is already mounted', () => {
   const ready = {
     inject: (deps, cb) => {
       requested.push(deps.join(','))
-      if (deps.includes('tools')) cb({ tools: { register: () => {} } })
+      if (deps.includes('tools')) cb({ tools: { register: () => {} }, get: () => undefined })
     },
     get: (name) => (name === 'webServer' ? { register: () => () => {} } : undefined),
     effect: (fn) => { fn(); return () => {} },
@@ -154,7 +154,12 @@ test('the route disposer is handed to ctx.effect so a stop removes it', () => {
   let effects = 0
   apply({
     inject: () => {},
-    get: () => ({ register: () => () => { disposed = true } }),
+    // Name-aware on purpose: the plugin now also registers an operator skill, and
+    // a `get` that answers every name would make this count two effects and tell
+    // us nothing about the ROUTE's ownership.
+    get: (name) => (name === 'webServer'
+      ? { register: () => () => { disposed = true } }
+      : undefined),
     effect: (fn) => { effects += 1; fn(); return () => {} },
   }, {})
   assert.equal(effects, 1, 'the route must be owned by exactly one effect')
