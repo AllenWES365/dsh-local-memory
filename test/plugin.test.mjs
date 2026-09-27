@@ -55,11 +55,21 @@ async function startMock(handler) {
   }
 }
 
-/** Load the plugin against `url` and hand back its two registered tools. */
+/**
+ * Load the plugin against `url` and hand back its two registered tools.
+ *
+ * `get` and `effect` are part of a real Cordis Context and the plugin uses both
+ * (`ctx.get('webServer')` to register its settings API optionally, `ctx.effect`
+ * to own the route disposer), so a mock without them is not a faithful stand-in.
+ * The webServer here records nothing: these tests exercise the TOOLS, and the
+ * routes have their own coverage.
+ */
 function loadTools(url, config = {}) {
   const registered = []
   const ctx = {
     inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }),
+    get: (name) => (name === 'webServer' ? { register: () => () => {} } : undefined),
+    effect: (fn) => { fn(); return () => {} },
   }
   apply(ctx, { apiUrl: url, ...config })
   const banks = registered.find((t) => t.name === 'memory_banks')
@@ -93,7 +103,7 @@ const simpleDaemon = (bankIds) => (record) => {
 test('registers exactly the two documented tools', () => {
   const registered = []
   apply(
-    { inject: (_d, cb) => cb({ tools: { register: (def) => registered.push(def) } }) },
+    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     {},
   )
   assert.deepEqual(registered.map((t) => t.name).sort(), ['memory_banks', 'memory_recall_all'])
@@ -102,7 +112,7 @@ test('registers exactly the two documented tools', () => {
 test('every tool declares a JSON-schema parameter block and a text renderer', () => {
   const registered = []
   apply(
-    { inject: (_d, cb) => cb({ tools: { register: (def) => registered.push(def) } }) },
+    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     {},
   )
   for (const def of registered) {
@@ -115,9 +125,16 @@ test('every tool declares a JSON-schema parameter block and a text renderer', ()
   }
 })
 
-test('the plugin does not throw when the tools service is absent', () => {
-  // ctx.inject simply never calls back — an unmounted registry must not crash boot.
-  assert.doesNotThrow(() => apply({ inject: () => {} }, {}))
+test('the plugin does not throw when neither tools nor webServer is mounted', () => {
+  // Two optional capabilities, both absent: `inject` never calls back, `get`
+  // answers undefined. The plugin must load and contribute nothing rather than
+  // crash the profile boot — a boot failure here takes the whole host down.
+  const bare = {
+    inject: () => {},
+    get: () => undefined,
+    effect: (fn) => { fn(); return () => {} },
+  }
+  assert.doesNotThrow(() => apply(bare, {}))
 })
 
 /* --------------------------------------------------------------- memory_banks */

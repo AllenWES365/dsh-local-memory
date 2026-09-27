@@ -84,7 +84,7 @@ test('contract: a bank id with :: survives URL encoding', { skip }, async () => 
 function liveTools(config = {}) {
   const registered = []
   apply(
-    { inject: (_d, cb) => cb({ tools: { register: (def) => registered.push(def) } }) },
+    { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) } }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     { apiUrl: API, ...config },
   )
   return {
