@@ -561,23 +561,45 @@ test('a wide, slow sweep says why it was slow and how to narrow it', async () =>
     const { recall } = loadTools(mock.url, { concurrency: 3 })
     const out = await recall.execute({ query: 'q' })
     assert.match(out, /Note: 12 banks took \d+ms/)
-    assert.match(out, /largely serially/)
+    assert.match(out, /wide sweep is the sum of its banks/)
     assert.match(out, /`banks` argument/)
   } finally { await mock.close() }
 })
 
-test('a narrow sweep stays quiet about timing', async () => {
+test('a NARROW but slow sweep blames depth, not width', async () => {
+  // The regression this guards: the note used to require >=8 banks, so two deep
+  // banks taking two seconds — the real shape of a deep memory bank — passed
+  // silently while the reader was left guessing why it was slow.
   const mock = await startMock(async (record) => {
     if (record.url === '/v1/default/banks') {
-      return { status: 200, body: { banks: [{ bank_id: 'only' }] } }
+      return { status: 200, body: { banks: [{ bank_id: 'deep-one' }, { bank_id: 'deep-two' }] } }
     }
-    await new Promise((resolve) => setTimeout(resolve, 60))
+    // Two banks at the default concurrency run in parallel, so the sweep costs
+    // one delay — it must clear 1s on its own to trip the threshold.
+    await new Promise((resolve) => setTimeout(resolve, 1200))
     return { status: 200, body: { results: [{ content: 'x' }] } }
   })
   try {
     const { recall } = loadTools(mock.url)
     const out = await recall.execute({ query: 'q' })
-    assert.ok(!out.includes('Note:'), 'a single slow bank is not worth a warning')
+    assert.match(out, /Note: this took \d+ms because a bank holding a lot of memories/)
+    assert.match(out, /will not speed it up/)
+    assert.ok(!out.includes('wide sweep'), 'a two-bank sweep must not be called wide')
+  } finally { await mock.close() }
+})
+
+test('a narrow, fast sweep stays quiet about timing', async () => {
+  const mock = await startMock(async (record) => {
+    if (record.url === '/v1/default/banks') {
+      return { status: 200, body: { banks: [{ bank_id: 'only' }] } }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return { status: 200, body: { results: [{ content: 'x' }] } }
+  })
+  try {
+    const { recall } = loadTools(mock.url)
+    const out = await recall.execute({ query: 'q' })
+    assert.ok(!out.includes('Note:'), 'a quick sweep needs no explanation')
   } finally { await mock.close() }
 })
 
@@ -587,6 +609,6 @@ test('a fast wide sweep does not warn either', async () => {
   try {
     const { recall } = loadTools(mock.url)
     const out = await recall.execute({ query: 'q' })
-    assert.ok(!out.includes('Note:'), 'width alone is not a problem')
+    assert.ok(!out.includes('Note:'), 'speed, not width, is what needs explaining')
   } finally { await mock.close() }
 })
