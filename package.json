@@ -1,0 +1,30 @@
+{
+  "name": "dsh-local-memory",
+  "version": "0.1.0",
+  "description": "Project-isolated long-term memory for DeepSeek Harness: each project keeps its own bank, and one aggregate view sees them all.",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "memory",
+    "hindsight"
+  ],
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/plugin.test.mjs test/stress.test.mjs test/real-daemon.test.mjs",
+    "test:unit": "node --test test/plugin.test.mjs",
+    "test:stress": "node --test test/stress.test.mjs",
+    "test:live": "node --test test/real-daemon.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

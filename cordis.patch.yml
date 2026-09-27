@@ -1,0 +1,20 @@
+# dsh-local-memory bundle patch
+#
+# Installed through the official CLI:
+#   dsh plugin --profile <name> add <this package>
+#
+# Because package.json declares `dsh.bundle.patch`, the CLI reconciles
+# `dsh.profile.bundles` and appends this file as a layer — no manual
+# cordis.patch.yml edit is needed. The profile boot merges the single insert
+# below exactly like a hand-written mount line.
+#
+# Config (all optional) can be attached to the row:
+#   - insert:
+#       - id: local-memory
+#         name: 'dsh-local-memory'
+#         config:
+#           apiUrl: 'http://127.0.0.1:9077'
+#           bankPrefix: 'coding-agent::'
+- insert:
+    - id: local-memory
+      name: 'dsh-local-memory'
