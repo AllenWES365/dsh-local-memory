@@ -104,6 +104,51 @@ test('registers nothing when no webServer is mounted', () => {
   assert.equal(registered, false)
 })
 
+test('WAITS for webServer instead of skipping when it is not mounted yet', () => {
+  // The regression this guards, found on a real boot and invisible to every
+  // other test here: plugin rows activate in parallel, so at apply() time
+  // `webServer` is often not mounted yet. The first version used a bare
+  // `ctx.get('webServer')` guard, saw undefined, and silently registered
+  // nothing — the settings page then fetched a path the server answered with
+  // its own 404, while every mock test passed because a mock always had one.
+  const requested = []
+  const bare = {
+    inject: (deps, cb) => {
+      requested.push(deps.join(','))
+      if (deps.includes('tools')) cb({ tools: { register: () => {} } })
+      // A real Cordis only calls back for `webServer` once that service exists.
+      if (deps.includes('webServer')) {
+        cb({
+          webServer: { register: () => () => {} },
+          get: () => undefined,
+          effect: (fn) => { fn(); return () => {} },
+        })
+      }
+    },
+    get: () => undefined,
+    effect: (fn) => { fn(); return () => {} },
+  }
+  apply(bare, {})
+  assert.ok(
+    requested.includes('webServer'),
+    `the plugin must wait for webServer, but asked only for: ${requested.join(' | ')}`,
+  )
+})
+
+test('does NOT wait for webServer when it is already mounted', () => {
+  const requested = []
+  const ready = {
+    inject: (deps, cb) => {
+      requested.push(deps.join(','))
+      if (deps.includes('tools')) cb({ tools: { register: () => {} } })
+    },
+    get: (name) => (name === 'webServer' ? { register: () => () => {} } : undefined),
+    effect: (fn) => { fn(); return () => {} },
+  }
+  apply(ready, {})
+  assert.ok(!requested.includes('webServer'), 'no need to wait for a service already present')
+})
+
 test('the route disposer is handed to ctx.effect so a stop removes it', () => {
   let disposed = false
   let effects = 0
