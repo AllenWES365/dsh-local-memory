@@ -89,6 +89,14 @@ window.__ModuleLoader__.load({
       var banks = banksState[0]
       var setBanks = banksState[1]
 
+      // Discovery is a separate fetch: the bank list answers "what do I
+      // remember?" and this answers "what SHOULD I remember?". A project with no
+      // bank is absent from the first and present in the second, which is the
+      // whole reason both exist.
+      var projectsState = React.useState(null)
+      var projects = projectsState[0]
+      var setProjects = projectsState[1]
+
       var errorState = React.useState(null)
       var error = errorState[0]
       var setError = errorState[1]
@@ -122,6 +130,11 @@ window.__ModuleLoader__.load({
             setBanks([])
             setBusy(false)
           })
+        // Discovery walks the filesystem, so it is allowed to fail on its own
+        // without taking the roster down with it.
+        request('/projects')
+          .then(function (data) { setProjects(data) })
+          .catch(function () { setProjects(null) })
       }, [])
 
       React.useEffect(function () { refresh() }, [refresh])
@@ -170,8 +183,10 @@ window.__ModuleLoader__.load({
       children.push(React.createElement('p', {
         key: 'intro',
         style: { margin: '0 0 14px', color: T.muted, fontSize: '13px', lineHeight: '1.6' },
-      }, '每个项目有自己的记忆库，互不干扰。下面的列表用来挑选要搜哪几个库——'
-        + '库越大搜索越慢（几百条事实的库约一秒），所以按需选择比全部搜一遍快得多。'))
+      }, '每个项目有自己的记忆库，互不干扰。「项目」一栏列出磁盘上找到的全部项目，'
+        + '标出哪些已经有记忆、哪些还没有——没记忆的项目不会出现在「记忆库」里，'
+        + '所以两栏要一起看。库越大搜索越慢（几百条事实的库约一秒），'
+        + '查询时按需勾选比全部搜一遍快得多。'))
 
       if (error) {
         children.push(React.createElement('div', {
@@ -251,6 +266,91 @@ window.__ModuleLoader__.load({
                 '还没有任何记忆库。在某个项目里开一次会话就会自动建立。')
             : React.createElement('div', { key: 'rows' }, bankRows),
       ]))
+
+      // --- projects: what exists vs what is remembered ------------------
+      if (projects && Array.isArray(projects.projects)) {
+        var withMemory = projects.projects.filter(function (p) { return p.hasMemory })
+        var without = projects.projects.filter(function (p) { return !p.hasMemory })
+        var projRows = []
+
+        withMemory.forEach(function (p) {
+          projRows.push(React.createElement('div', {
+            key: 'y-' + p.path,
+            style: { padding: '8px 4px', borderTop: '1px solid ' + T.border },
+          }, [
+            React.createElement('div', {
+              key: 'p',
+              style: { fontFamily: 'ui-monospace, monospace', fontSize: '12.5px', color: T.text, wordBreak: 'break-all' },
+            }, p.path),
+            React.createElement('div', {
+              key: 'b',
+              style: { color: T.ok, fontSize: '11.5px', marginTop: '2px' },
+            }, '✓ ' + p.bankId + '  ' + group(p.factCount) + ' 条事实'
+              + (p.lastWriteAt ? '  ·  ' + shortTime(p.lastWriteAt) : '')),
+          ]))
+        })
+
+        without.forEach(function (p) {
+          projRows.push(React.createElement('div', {
+            key: 'n-' + p.path,
+            style: { padding: '8px 4px', borderTop: '1px solid ' + T.border },
+          }, [
+            React.createElement('div', {
+              key: 'p',
+              style: { fontFamily: 'ui-monospace, monospace', fontSize: '12.5px', color: T.muted, wordBreak: 'break-all' },
+            }, p.path),
+            React.createElement('div', {
+              key: 'b',
+              style: { color: T.muted, fontSize: '11.5px', marginTop: '2px' },
+            }, '尚无记忆 · 在里面开一次会话即建立 ' + p.bankId),
+          ]))
+        })
+
+        if (projects.unmatched && projects.unmatched.length > 0) {
+          projects.unmatched.forEach(function (u) {
+            projRows.push(React.createElement('div', {
+              key: 'u-' + u.bankId,
+              style: { padding: '8px 4px', borderTop: '1px solid ' + T.border },
+            }, [
+              React.createElement('div', {
+                key: 'b',
+                style: { fontFamily: 'ui-monospace, monospace', fontSize: '12.5px', color: T.warn, wordBreak: 'break-all' },
+              }, u.bankId),
+              React.createElement('div', {
+                key: 'd',
+                style: { color: T.muted, fontSize: '11.5px', marginTop: '2px' },
+              }, '有记忆（' + group(u.factCount) + ' 条），但对不上任何磁盘上的项目'),
+            ]))
+          })
+        }
+
+        children.push(React.createElement('div', {
+          key: 'projects',
+          style: box({ marginBottom: '16px' }),
+        }, [
+          React.createElement('div', {
+            key: 'head',
+            style: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' },
+          }, [
+            React.createElement('strong', { key: 't', style: { color: T.text, fontSize: '13.5px' } },
+              '项目（' + projects.projects.length + '）'),
+            React.createElement('span', { key: 's', style: { color: T.muted, fontSize: '12px' } },
+              withMemory.length + ' 个有记忆 · ' + without.length + ' 个还没有'),
+          ]),
+          projRows.length === 0
+            ? React.createElement('div', {
+                key: 'none',
+                style: { color: T.muted, fontSize: '12.5px', padding: '8px 4px' },
+              }, '工作区里没找到任何项目。')
+            : React.createElement('div', { key: 'rows' }, projRows),
+          without.length > 0
+            ? React.createElement('div', {
+                key: 'hint',
+                style: { color: T.muted, fontSize: '11.5px', marginTop: '8px' },
+              }, '没有记忆的项目，只要在里面开一次会话，就会自动建库并从该项目的 git 历史播种。')
+            : null,
+        ]))
+      }
 
       // --- search ------------------------------------------------------
       children.push(React.createElement('div', {

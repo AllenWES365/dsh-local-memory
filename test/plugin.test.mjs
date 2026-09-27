@@ -100,13 +100,16 @@ const simpleDaemon = (bankIds) => (record) => {
 
 /* ------------------------------------------------------- registration shape */
 
-test('registers exactly the two documented tools', () => {
+test('registers exactly the three documented tools', () => {
   const registered = []
   apply(
     { inject: (_deps, cb) => cb({ tools: { register: (def) => registered.push(def) }, get: () => undefined }), get: (n) => (n === 'webServer' ? { register: () => () => {} } : undefined), effect: (fn) => { fn(); return () => {} } },
     {},
   )
-  assert.deepEqual(registered.map((t) => t.name).sort(), ['memory_banks', 'memory_recall_all'])
+  assert.deepEqual(
+    registered.map((t) => t.name).sort(),
+    ['memory_banks', 'memory_projects', 'memory_recall_all'],
+  )
 })
 
 test('every tool declares a JSON-schema parameter block and a text renderer', () => {

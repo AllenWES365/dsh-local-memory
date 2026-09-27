@@ -3,9 +3,10 @@
 **给 DeepSeek Harness 的跨项目长期记忆：每个项目各存各的库，互不干扰；一个总视角一次看遍全部。**
 
 ```
+memory_projects      列出全部项目，标出哪些有记忆、哪些还没有
 memory_banks         列出所有项目记忆库（含规模与活跃度）
 memory_recall_all    跨库查询，结果按项目分组
-设置 → 本地记忆       图形界面：勾选要查哪些库，直接搜
+设置 → 本地记忆       图形界面：项目总览 + 勾选要查哪些库 + 直接搜
 ```
 
 ---
@@ -22,6 +23,34 @@ Hindsight 的记忆库是**平级**的——没有层级，没有"总库管理�
 **这个插件保留"每项目一库"（Hindsight 原生就做得好），再在读取时补上缺失的跨库视角。**
 
 聚合结果是一份**视图**，不是第二份副本——所以没有东西需要同步，也不会有数据重复。
+
+### 还有一个更隐蔽的缺口
+
+「库列表」只能回答**"我记得什么"**。它回答不了**"我该记得什么"**——**一个从没被工作过的项目根本不在列表里，沉默和不存在的表现一模一样。**
+
+你有 10 个项目、1 个库的时候，你需要看到的是**缺的那 9 个，而且要按名字列出来**。
+
+所以还有 `memory_projects`：它扫描工作区、找出其中的 git 仓库、推导每个项目**将会**得到的库名，再和实际存在的库对照。于是：
+
+```
+3 working root(s), 13 project(s) found, 1 with memory.
+
+## With memory
+- /Volumes/SSD-2TB
+    coding-agent::SSD-2TB  (906 facts, last write 2026-09-27T03:40)
+
+## Project found, no memory yet
+- /Volumes/SSD-2TB/project/mission-control
+    will become coding-agent::mission-control
+- /Volumes/SSD-2TB/project/verify
+    will become coding-agent::verify
+...
+
+Run one session inside a directory listed here and its bank is created and
+seeded from that project's git history automatically.
+```
+
+**目录里出现过的库但对应不到任何项目时，也会单独列出来**——那种"来历不明的库"正是这个视图该暴露的东西。
 
 ## 依赖
 
