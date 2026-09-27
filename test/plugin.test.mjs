@@ -465,13 +465,24 @@ test('stress: 120 banks are all searched and the fan-out stays bounded', async (
   } finally { await mock.close() }
 })
 
-test('stress: 120 banks finish well inside a sane budget', async () => {
+test('overhead: the plugin adds little on top of the bank round-trips', async () => {
+  // SCOPE — read this before trusting the number. This measures the PLUGIN's own
+  // overhead against a local mock: request building, fan-out bookkeeping, string
+  // assembly. It says NOTHING about real-world latency, and an earlier version of
+  // this test was read as if it did.
+  //
+  // Measured against the real daemon: a sweep costs roughly 150ms per bank,
+  // because the daemon serves recalls largely serially — concurrency 1, 6 and 13
+  // land within 20% of each other, and disabling reranking (which halves a single
+  // call, 85ms -> 37ms) changes a 13-bank sweep not at all (1862ms either way).
+  // So 120 real banks would take ~18s whatever this test prints.
   const ids = Array.from({ length: 120 }, (_, i) => `b${i}`)
   const mock = await startMock(async (record) => {
     if (record.url === '/v1/default/banks') {
       return { status: 200, body: { banks: ids.map((bank_id) => ({ bank_id })) } }
     }
-    // 25ms of simulated work per bank: serial would need ~3s, bounded-fanout ~0.5s.
+    // 25ms per bank: serial needs ~3s, so finishing well under that proves only
+    // that the plugin overlaps its own round-trips.
     await new Promise((resolve) => setTimeout(resolve, 25))
     return { status: 200, body: { results: [{ content: 'hit' }] } }
   })
@@ -480,7 +491,7 @@ test('stress: 120 banks finish well inside a sane budget', async () => {
     const started = Date.now()
     await recall.execute({ query: 'q' })
     const elapsed = Date.now() - started
-    assert.ok(elapsed < 2500, `fan-out should overlap work (took ${elapsed}ms)`)
+    assert.ok(elapsed < 2500, `plugin-side fan-out should overlap round-trips (took ${elapsed}ms)`)
   } finally { await mock.close() }
 })
 
@@ -521,5 +532,61 @@ test('defaults are sane when no config is supplied', async () => {
     const { recall } = loadTools(mock.url)
     const out = await recall.execute({ query: 'q' })
     assert.match(out, /## a/)
+  } finally { await mock.close() }
+})
+
+/* ------------------------------------------------------ measured reporting */
+
+test('the header reports how long the sweep actually took', async () => {
+  const mock = await startMock(simpleDaemon(['a']))
+  try {
+    const { recall } = loadTools(mock.url)
+    const out = await recall.execute({ query: 'q' })
+    assert.match(out, /^Searched 1 bank\(s\) in \d+ms for: q$/m)
+  } finally { await mock.close() }
+})
+
+test('a wide, slow sweep says why it was slow and how to narrow it', async () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `b${i}`)
+  const mock = await startMock(async (record) => {
+    if (record.url === '/v1/default/banks') {
+      return { status: 200, body: { banks: ids.map((bank_id) => ({ bank_id })) } }
+    }
+    // 12 banks at concurrency 3 is 4 serial waves; 350ms each clears the 1s
+    // reporting threshold with margin.
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    return { status: 200, body: { results: [{ content: 'x' }] } }
+  })
+  try {
+    const { recall } = loadTools(mock.url, { concurrency: 3 })
+    const out = await recall.execute({ query: 'q' })
+    assert.match(out, /Note: 12 banks took \d+ms/)
+    assert.match(out, /largely serially/)
+    assert.match(out, /`banks` argument/)
+  } finally { await mock.close() }
+})
+
+test('a narrow sweep stays quiet about timing', async () => {
+  const mock = await startMock(async (record) => {
+    if (record.url === '/v1/default/banks') {
+      return { status: 200, body: { banks: [{ bank_id: 'only' }] } }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    return { status: 200, body: { results: [{ content: 'x' }] } }
+  })
+  try {
+    const { recall } = loadTools(mock.url)
+    const out = await recall.execute({ query: 'q' })
+    assert.ok(!out.includes('Note:'), 'a single slow bank is not worth a warning')
+  } finally { await mock.close() }
+})
+
+test('a fast wide sweep does not warn either', async () => {
+  const ids = Array.from({ length: 12 }, (_, i) => `b${i}`)
+  const mock = await startMock(simpleDaemon(ids))
+  try {
+    const { recall } = loadTools(mock.url)
+    const out = await recall.execute({ query: 'q' })
+    assert.ok(!out.includes('Note:'), 'width alone is not a problem')
   } finally { await mock.close() }
 })
