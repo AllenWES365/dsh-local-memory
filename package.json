@@ -12,6 +12,7 @@
     "hindsight"
   ],
   "files": [
+    "LICENSE",
     "README.md",
     "client",
     "cordis.patch.yml",
