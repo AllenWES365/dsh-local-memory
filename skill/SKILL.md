@@ -1,6 +1,6 @@
 ---
 name: dsh-local-memory
-description: How this machine's long-term memory works — the Hindsight daemon behind the 🧠 banner, the per-project bank layout, and how to configure, diagnose, or repair it. Use when the user asks about long-term memory, project memory, memory banks, "why does it remember/not remember", or wants local (offline-ish) memory configured.
+description: How this machine's long-term memory works — the Hindsight daemon behind the 🧠 banner, the per-project bank layout, how to create a bank for a project that has none (seeding), and how to configure, diagnose, or repair it. Use when the user asks about long-term memory, project memory, memory banks, "why does it remember/not remember", wants a project remembered or backfilled, or wants local (offline-ish) memory configured.
 ---
 
 # Local long-term memory (Hindsight)
@@ -42,6 +42,79 @@ The rule is `coding-agent::` + the project directory name, resolved from
 A bank is created the first time a session records something there. Opening a
 project you have never worked in produces no bank yet — that is expected, not a
 fault.
+
+## Creating a bank without opening a session (seeding)
+
+A cold project has no bank at all, so it is invisible to `memory_banks` and
+cannot be searched. You do **not** have to open a session in it to fix that:
+Hindsight ships a standalone seeding engine, and this plugin's settings panel
+exposes it directly.
+
+```sh
+node <hindsight-coding-agents>/dist/deepen.js \
+    --repo <project> --harness dsh --gitlog-limit 300
+```
+
+That is not a reimplementation — it is the **same entry point the Hindsight
+plugin spawns on session start** (`startBackgroundSeed`). Running it is exactly
+equivalent to what a session in that directory would have triggered, so nothing
+about the resulting bank can differ.
+
+**Finding the engine.** The package declares `"./dist/*"` in its `exports` map, so
+`@vectorize-io/hindsight-coding-agents/dist/deepen.js` is a supported subpath,
+not a private file. Resolve it from the same `node_modules` the plugin is
+installed in, or from `~/.dsh/profiles/*/node_modules/`.
+
+> `dist/hindsight-seed.js seed --repo <dir>` is a second, thinner wrapper over
+> the same call. It hardcodes the `claude-code` harness while resolving the bank,
+> so prefer calling `deepen.js` directly here.
+
+**What it does, in order** (all of it visible in
+`~/.hindsight/coding-agents-logs/plugin.log`):
+
+1. `configureBank` — **creates the bank immediately**, with the missions,
+   strategies, entity labels and knowledge pages.
+2. Imports developer conversations that are not already ingested.
+3. Ingests git commit **messages** as **one** aggregated document
+   (`--git-ingest message`, the default; `full` also reads diffs, `none` skips).
+4. Drains the extraction queue and waits for server-side ops to settle.
+
+**It is slow, and the bank is usable before it finishes.** Measured on a
+9-commit repository: 90.4 s wall — 35 s of extraction plus the settle wait. The
+bank and its knowledge pages exist within the first second; fact counts climb
+over the following minute. Never report a seed as complete because the process
+was started.
+
+**The marker that proves it worked** is a document named `gitlog:<repo-name>`
+tagged `gitlog-head:<sha>` `source:git-log` `source:git`. That tag is how you
+tell "history ingested" from "bank created by conversations only" — the two look
+identical in the bank roster, and only the first can ever reach
+`synced: true` (`synced = gitlogPresent && pages > 0 && no active ops`).
+Compare `gitlog-head:<sha>` against `git rev-parse HEAD` to decide whether a
+re-seed would add anything.
+
+**Re-seeding is safe and incremental.** A per-bank lock file (stale after 30
+min) means a second concurrent run for the same bank prints
+`another run holds the lock` and exits rather than double-writing; already
+ingested conversations are skipped by id.
+
+## From an agent
+
+`memory_seed` does all of the above:
+
+| Call | Effect |
+| --- | --- |
+| `memory_seed()` | Lists what is seedable — no side effects. |
+| `memory_seed({ all: true })` | Seeds every discovered git repository with no memory. |
+| `memory_seed({ path })` / `{ paths: [...] }` | Seeds exactly those, as long as discovery already found them. |
+
+A path outside the configured working roots, a relative path, or a directory
+that is not a repository is refused with a reason. Seeding always runs detached
+in the background; use `memory_projects` afterwards to watch the fact counts.
+
+In the settings panel the same thing is a button per project. A project is only
+offered one when its directory is a real git repository — a plain folder has no
+history to ingest and says so instead of showing a button that cannot work.
 
 ## Configuration
 
@@ -174,3 +247,14 @@ mental models with no memories in it.
   `gitlogPresent && …`.
 - A bank holding a session's transcript grows by **upsert**, not append, for the
   full-text path, so the document always reflects the whole session.
+- **"Has a bank" is not "has memory about the code."** A bank that only ever saw
+  conversations holds decisions from those conversations and nothing about the
+  repository's own history. `hindsight_sync_status` distinguishes them;
+  `memory_banks` does not, because the roster cannot see documents.
+- `deepen.js` writes to stdout only; it is meant to be spawned detached with
+  `stdio: 'ignore'`, which is why nothing comes back from a seed through the
+  caller. Read `plugin.log`, or the `gitlog:` document, for the outcome.
+- An empty subdirectory under a working root is not a discovered project. This
+  plugin reports repositories plus the working roots themselves; a bank created
+  by a session in some other subdirectory still shows up, in the "matches no
+  project on disk" group.

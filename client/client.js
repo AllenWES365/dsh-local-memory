@@ -71,6 +71,31 @@ window.__ModuleLoader__.load({
       return iso.slice(0, 16).replace('T', ' ')
     }
 
+    var has = function (object, key) {
+      return Object.prototype.hasOwnProperty.call(object, key)
+    }
+
+    var copy = function (object) {
+      var next = {}
+      for (var key in object) if (has(object, key)) next[key] = object[key]
+      return next
+    }
+
+    /** A small button, matching the search button's language. */
+    var btnStyle = function (primary, disabled) {
+      return {
+        background: primary ? T.brand : 'transparent',
+        border: primary ? 'none' : '1px solid ' + T.border,
+        borderRadius: '6px',
+        color: primary ? '#fff' : T.text,
+        cursor: disabled ? 'default' : 'pointer',
+        fontSize: '12px',
+        opacity: disabled ? 0.45 : 1,
+        padding: '4px 12px',
+        whiteSpace: 'nowrap',
+      }
+    }
+
     /* -------------------------------------------------------------- view */
 
     var box = function (extra) {
@@ -172,6 +197,123 @@ window.__ModuleLoader__.load({
         })
       }
 
+      /* ---------------------------------------------------------- seeding */
+
+      // A seed is a detached background process on the host. Nothing here can
+      // await it, so the page does the two things it actually can: remember
+      // WHEN it asked, and keep asking the host for the truth. A run is only
+      // called finished when the host reports history seeded at or after that
+      // moment — never on a timer alone, because a timer that lies is exactly
+      // the failure this panel exists to avoid.
+
+      var pendingState = React.useState({})
+      var pending = pendingState[0]
+      var setPending = pendingState[1]
+
+      var noteState = React.useState({})
+      var notes = noteState[0]
+      var setNotes = noteState[1]
+
+      var note = React.useCallback(function (path, text, tone) {
+        setNotes(function (prev) {
+          var next = copy(prev)
+          next[path] = { text: text, tone: tone || 'muted' }
+          return next
+        })
+      }, [])
+
+      var refreshProjects = React.useCallback(function () {
+        request('/projects')
+          .then(function (data) { setProjects(data) })
+          .catch(function () {})
+      }, [])
+
+      var runSeed = function (paths) {
+        if (!paths || paths.length === 0) return
+        setBusy(true)
+        setError(null)
+        request('/seed', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(paths.length === 1 ? { path: paths[0] } : { paths: paths }),
+        })
+          .then(function (data) {
+            var startedAt = Date.now()
+            var started = {}
+            ;(data.results || []).forEach(function (entry) {
+              if (entry.ok) {
+                started[entry.path] = startedAt
+                note(entry.path, '已开始，后台播种中…', 'muted')
+              } else {
+                note(entry.path, entry.error || '无法开始', 'error')
+              }
+            })
+            if (Object.keys(started).length > 0) {
+              setPending(function (prev) {
+                var next = copy(prev)
+                for (var path in started) if (has(started, path)) next[path] = started[path]
+                return next
+              })
+            }
+            setBusy(false)
+            refreshProjects()
+          })
+          .catch(function (err) {
+            setError(err.message)
+            setBusy(false)
+          })
+      }
+
+      var pendingCount = Object.keys(pending).length
+
+      React.useEffect(function () {
+        if (pendingCount === 0) return undefined
+        var timer = setInterval(function () {
+          request('/projects')
+            .then(function (data) {
+              setProjects(data)
+              var rows = data.projects || []
+              setPending(function (prev) {
+                var next = {}
+                var now = Date.now()
+                for (var path in prev) {
+                  if (!has(prev, path)) continue
+                  var row = null
+                  for (var i = 0; i < rows.length; i += 1) if (rows[i].path === path) row = rows[i]
+                  var startedAt = prev[path]
+                  var age = now - startedAt
+                  var seededAt = row && row.seededAt ? Date.parse(row.seededAt) : NaN
+                  // The host's own record of when git history landed. One minute
+                  // of slack absorbs clock skew between this tab and the daemon.
+                  var done = !isNaN(seededAt) && seededAt >= startedAt - 60000
+                  // The host stops reporting a run for this project and nothing
+                  // landed: the process died. Giving up on a timer alone would
+                  // show "播种中" forever, which is the kind of claim this panel
+                  // exists to avoid making.
+                  var died = !done && row && row.seeding === false && age > 60000
+                  if (done) {
+                    // The milestone this panel can actually verify is the gitlog
+                    // document landing. The engine keeps running for another
+                    // minute afterwards draining extraction, so the fact count
+                    // still climbs — say that, rather than implying it is over.
+                    note(path, 'git 历史已入库，事实仍在后台抽取', 'ok')
+                  } else if (died) {
+                    note(path, '播种进程已结束，但没有写入 git 历史——详见 '
+                      + '~/.hindsight/coding-agents-logs/plugin.log', 'error')
+                  } else if (age > 20 * 60 * 1000) {
+                    note(path, '超过 20 分钟仍未完成，详见 ~/.hindsight/coding-agents-logs/plugin.log', 'warn')
+                  } else {
+                    next[path] = startedAt
+                  }
+                }
+                return next
+              })
+            })
+            .catch(function () {})
+        }, 5000)
+        return function () { clearInterval(timer) }
+      }, [pendingCount, note])
+
       var totalFacts = (banks || []).reduce(function (sum, bank) {
         return sum + (typeof bank.factCount === 'number' ? bank.factCount : 0)
       }, 0)
@@ -185,7 +327,9 @@ window.__ModuleLoader__.load({
         style: { margin: '0 0 14px', color: T.muted, fontSize: '13px', lineHeight: '1.6' },
       }, '每个项目有自己的记忆库，互不干扰。「项目」一栏列出磁盘上找到的全部项目，'
         + '标出哪些已经有记忆、哪些还没有——没记忆的项目不会出现在「记忆库」里，'
-        + '所以两栏要一起看。库越大搜索越慢（几百条事实的库约一秒），'
+        + '所以两栏要一起看。还没记忆的 git 仓库可以直接点「建立记忆」把 git 历史'
+        + '播进去，不必先在里面开会话；普通文件夹没有历史可播，只能在里面开一次会话时建立。'
+        + '库越大搜索越慢（几百条事实的库约一秒），'
         + '查询时按需勾选比全部搜一遍快得多。'))
 
       if (error) {
@@ -268,41 +412,130 @@ window.__ModuleLoader__.load({
       ]))
 
       // --- projects: what exists vs what is remembered ------------------
+      //
+      // This panel used to be a report: it named every project without memory
+      // and told the reader to go open a session in each one. That put the work
+      // on the person reading it, and it could not distinguish a repository —
+      // whose history is seedable right now — from a plain folder, which can
+      // never have git history at all. Both are now drawn differently, and the
+      // ones that can be filled have the button that fills them.
       if (projects && Array.isArray(projects.projects)) {
         var withMemory = projects.projects.filter(function (p) { return p.hasMemory })
         var without = projects.projects.filter(function (p) { return !p.hasMemory })
+        var actionable = projects.projects.filter(function (p) {
+          return p.canSeed && (!p.hasMemory || p.behind === true || (p.isGit && p.seededAt === undefined))
+        })
         var projRows = []
 
-        withMemory.forEach(function (p) {
-          projRows.push(React.createElement('div', {
-            key: 'y-' + p.path,
-            style: { padding: '8px 4px', borderTop: '1px solid ' + T.border },
-          }, [
-            React.createElement('div', {
-              key: 'p',
-              style: { fontFamily: 'ui-monospace, monospace', fontSize: '12.5px', color: T.text, wordBreak: 'break-all' },
-            }, p.path),
-            React.createElement('div', {
-              key: 'b',
-              style: { color: T.ok, fontSize: '11.5px', marginTop: '2px' },
-            }, '✓ ' + p.bankId + '  ' + group(p.factCount) + ' 条事实'
-              + (p.lastWriteAt ? '  ·  ' + shortTime(p.lastWriteAt) : '')),
-          ]))
-        })
+        var pathLine = function (p, tone) {
+          return React.createElement('div', {
+            key: 'p',
+            style: {
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: '12.5px',
+              color: tone,
+              wordBreak: 'break-all',
+            },
+          }, p.path)
+        }
 
-        without.forEach(function (p) {
+        var detailLine = function (key, text, tone) {
+          return React.createElement('div', {
+            key: key,
+            style: { color: tone, fontSize: '11.5px', marginTop: '2px' },
+          }, text)
+        }
+
+        projects.projects.forEach(function (p) {
+          var noteFor = notes[p.path]
+          var waiting = has(pending, p.path) || p.seeding === true
+          var elapsed = has(pending, p.path)
+            ? Math.max(0, Math.round((Date.now() - pending[p.path]) / 1000))
+            : null
+          var lines = []
+          var action = null
+
+          if (p.hasMemory) {
+            lines.push(pathLine(p, T.text))
+            var bits = ['✓ ' + p.bankId, group(p.factCount) + ' 条事实']
+            if (p.lastWriteAt) bits.push('最近写入 ' + shortTime(p.lastWriteAt))
+            lines.push(detailLine('b', bits.join('  ·  '), T.ok))
+            if (!p.isGit) {
+              lines.push(detailLine('g', '不是 git 仓库，没有 git 历史可播种', T.muted))
+            } else if (p.seededAt === undefined) {
+              lines.push(detailLine('g', '记忆目前只来自对话，git 历史还没播种', T.warn))
+              action = { label: '播种 git 历史', primary: false }
+            } else if (p.behind === true) {
+              lines.push(detailLine('g', '记忆停在旧提交，之后的新提交还没入库（上次播种 '
+                + shortTime(p.seededAt) + '）', T.warn))
+              action = { label: '更新记忆', primary: false }
+            } else {
+              lines.push(detailLine('g', 'git 历史已播种于 ' + shortTime(p.seededAt)
+                + (p.behind === false ? '，与当前提交一致' : ''), T.muted))
+            }
+          } else {
+            lines.push(pathLine(p, T.muted))
+            lines.push(detailLine('b', '尚无记忆  →  ' + p.bankId, T.muted))
+            if (!p.isGit) {
+              lines.push(detailLine('g', '不是 git 仓库：只有在里面开一次会话才会建立', T.muted))
+            } else {
+              lines.push(detailLine('g', 'git 仓库，可以直接播种历史，不必先开会话', T.muted))
+              action = { label: '建立记忆', primary: true }
+            }
+          }
+
+          var right = null
+          if (waiting) {
+            right = React.createElement('button', {
+              key: 'act',
+              disabled: true,
+              style: btnStyle(true, true),
+            }, elapsed === null ? '播种中…' : '播种中… ' + elapsed + 's')
+          } else if (action !== null && p.canSeed) {
+            right = React.createElement('button', {
+              key: 'act',
+              disabled: busy,
+              onClick: function () { runSeed([p.path]) },
+              style: btnStyle(action.primary, busy),
+            }, action.label)
+          } else if (action !== null) {
+            right = React.createElement('span', {
+              key: 'act',
+              style: { color: T.error, fontSize: '11.5px' },
+            }, '播种引擎不可用')
+          }
+
+          if (noteFor) {
+            lines.push(React.createElement('div', {
+              key: 'note',
+              style: {
+                fontSize: '11.5px',
+                marginTop: '3px',
+                color: noteFor.tone === 'ok' ? T.ok
+                  : noteFor.tone === 'error' ? T.error
+                    : noteFor.tone === 'warn' ? T.warn : T.muted,
+              },
+            }, noteFor.text))
+          }
+
           projRows.push(React.createElement('div', {
-            key: 'n-' + p.path,
-            style: { padding: '8px 4px', borderTop: '1px solid ' + T.border },
+            key: p.path,
+            style: {
+              padding: '8px 4px',
+              borderTop: '1px solid ' + T.border,
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '10px',
+            },
           }, [
             React.createElement('div', {
-              key: 'p',
-              style: { fontFamily: 'ui-monospace, monospace', fontSize: '12.5px', color: T.muted, wordBreak: 'break-all' },
-            }, p.path),
-            React.createElement('div', {
-              key: 'b',
-              style: { color: T.muted, fontSize: '11.5px', marginTop: '2px' },
-            }, '尚无记忆 · 在里面开一次会话即建立 ' + p.bankId),
+              key: 'l',
+              style: { flex: '1 1 auto', minWidth: 0 },
+            }, lines),
+            right === null ? null : React.createElement('div', {
+              key: 'r',
+              style: { flex: '0 0 auto', paddingTop: '1px' },
+            }, right),
           ]))
         })
 
@@ -324,6 +557,19 @@ window.__ModuleLoader__.load({
           })
         }
 
+        var bulk = actionable.filter(function (p) { return pending[p.path] === undefined }).length > 1
+          ? React.createElement('button', {
+              key: 'bulk',
+              disabled: busy,
+              onClick: function () {
+                runSeed(actionable
+                  .filter(function (p) { return pending[p.path] === undefined && p.seeding !== true })
+                  .map(function (p) { return p.path }))
+              },
+              style: btnStyle(false, busy),
+            }, '全部建立（' + actionable.length + '）')
+          : null
+
         children.push(React.createElement('div', {
           key: 'projects',
           style: box({ marginBottom: '16px' }),
@@ -336,18 +582,28 @@ window.__ModuleLoader__.load({
               '项目（' + projects.projects.length + '）'),
             React.createElement('span', { key: 's', style: { color: T.muted, fontSize: '12px' } },
               withMemory.length + ' 个有记忆 · ' + without.length + ' 个还没有'),
+            React.createElement('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+            bulk,
           ]),
+          projects.canSeed === false
+            ? React.createElement('div', {
+                key: 'noengine',
+                style: { color: T.error, fontSize: '11.5px', margin: '2px 4px 6px' },
+              }, '找不到 Hindsight 的播种引擎（deepen.js），因此这里不能直接建库。'
+                + '在没有按钮的项目里开一次会话仍然会建立记忆。')
+            : null,
           projRows.length === 0
             ? React.createElement('div', {
                 key: 'none',
                 style: { color: T.muted, fontSize: '12.5px', padding: '8px 4px' },
               }, '工作区里没找到任何项目。')
             : React.createElement('div', { key: 'rows' }, projRows),
-          without.length > 0
+          actionable.length > 0
             ? React.createElement('div', {
                 key: 'hint',
                 style: { color: T.muted, fontSize: '11.5px', marginTop: '8px' },
-              }, '没有记忆的项目，只要在里面开一次会话，就会自动建库并从该项目的 git 历史播种。')
+              }, '播种在后台运行，只读取该项目的 git 提交信息，约一分钟；'
+                + '期间这个项目会显示「播种中」，完成后事实数会自己长上来。')
             : null,
         ]))
       }
