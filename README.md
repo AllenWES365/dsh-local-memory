@@ -2,6 +2,12 @@
 
 **给 DeepSeek Harness 的跨项目长期记忆：每个项目各存各的库，互不干扰；一个总视角一次看遍全部。**
 
+<https://github.com/AllenWES365/dsh-local-memory>
+
+```bash
+dsh plugin --profile web add github:AllenWES365/dsh-local-memory
+```
+
 ```
 memory_projects      列出全部项目，标出哪些有记忆、哪些还没有
 memory_banks         列出所有项目记忆库（含规模与活跃度）
@@ -81,10 +87,16 @@ dsh plugin --profile web add @vectorize-io/hindsight-coding-agents
 ## 安装
 
 ```bash
-dsh plugin --profile web add dsh-local-memory
+dsh plugin --profile web add github:AllenWES365/dsh-local-memory
 ```
 
 装完**重启 DSH**，然后在 **设置 → 本地记忆** 看到界面。
+
+这条命令是验证过的：在一个干净的 profile 里（`--from-default-profile web` 初始化、全新的 `DSH_HOME`）执行它，命令会自动把这个包加进 `dsh.profile.bundles` 并挂载，界面和路由都正常。
+
+> 本插件**尚未发布到 npm**，所以 `add dsh-local-memory` 这种写法在别人机器上会失败——请用上面的 GitHub 地址。
+>
+> 从本地源码开发时才用 `dsh plugin --profile web add link:$PWD`。
 
 ## 前置配置（一次性）
 
