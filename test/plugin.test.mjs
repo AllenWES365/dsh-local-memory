@@ -128,10 +128,45 @@ test('memory_banks lists every bank, sorted', async () => {
     const { banks } = loadTools(mock.url)
     const out = await banks.execute({})
     assert.match(out, /3 memory bank\(s\)/)
-    assert.deepEqual(
-      out.split('\n').slice(1),
-      ['- alpha', '- mid', '- zeta'],
-    )
+    const ids = out.split('\n').slice(1).map((line) => line.replace(/^- /, '').split('  (')[0])
+    assert.deepEqual(ids, ['alpha', 'mid', 'zeta'])
+  } finally { await mock.close() }
+})
+
+test('memory_banks reports size and last-write time so targeting is informed', async () => {
+  // These two fields are the whole point of the listing: size predicts cost, and
+  // recency is the best hint about relevance. Without them the caller can only
+  // guess which banks to search — or sweep everything, which is the slow path.
+  const mock = await startMock(() => ({
+    status: 200,
+    body: {
+      banks: [
+        {
+          bank_id: 'big',
+          fact_count: 873,
+          last_write_at: '2026-09-27T02:33:03.973637+00:00',
+        },
+        { bank_id: 'small', fact_count: 4, last_write_at: '2026-01-02T03:04:05+00:00' },
+      ],
+    },
+  }))
+  try {
+    const { banks } = loadTools(mock.url)
+    const out = await banks.execute({})
+    assert.match(out, /- big {2}\(873 facts, last write 2026-09-27 02:33\)/)
+    assert.match(out, /- small {2}\(4 facts, last write 2026-01-02 03:04\)/)
+  } finally { await mock.close() }
+})
+
+test('memory_banks degrades gracefully when a bank reports no size', async () => {
+  const mock = await startMock(() => ({
+    status: 200,
+    body: { banks: [{ bank_id: 'unknown' }] },
+  }))
+  try {
+    const { banks } = loadTools(mock.url)
+    const out = await banks.execute({})
+    assert.match(out, /- unknown {2}\(unknown size, never written\)/)
   } finally { await mock.close() }
 })
 
